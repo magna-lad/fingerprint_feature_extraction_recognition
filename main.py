@@ -8,7 +8,7 @@ from load_save import *
 import numpy as np
 
 def main():
-    data_dir = r"/kaggle/input/10classes/10class" # for kaggle 
+    data_dir = r"/kaggle/input/300classes/300class" # for kaggle 
     
     # Step 1: Load or process skeleton data
     print("Checking for cached skeleton data...")
