@@ -5,6 +5,7 @@ import numpy as np
 import cv2 
 from torch.utils.data import Dataset
 from torchvision import transforms
+import os
 
 class FingerprintTextureDataset(Dataset):
     def __init__(self, pairs, core_finder_func, augment=False):
@@ -32,60 +33,61 @@ class FingerprintTextureDataset(Dataset):
     def __len__(self):
         return len(self.pairs)
         
-    def preprocess_image(self, img_data, orientation_map):
-        if img_data is None or img_data.size == 0:
+    def preprocess_image(self,img_path):
+
+        if img_path is None or not os.path.exists(img_path):
             return np.zeros((self.img_size, self.img_size), dtype=np.float32)
 
-        img_data = img_data.astype(np.float32)
+        img_raw = cv2.imread(img_path, 0)
+        if img_raw is None:
+            return np.zeros((self.img_size, self.img_size), dtype=np.float32)
+        img_float = img_raw.astype(np.float32)
+        mean = np.mean(img_float)
+        std = np.std(img_float) + 1e-6 # avoid div by zero
+        img_norm = (img_float - mean) / std
+
+
         
-        # Inversion Fix
-        if np.mean(img_data) > 100:
-            img_data = 255.0 - img_data 
-            
-        img_data[img_data > 127] = 255.0
-        img_data[img_data <= 127] = 0.0
 
         # Center of Mass Alignment
         try:
-            img_u8 = img_data.astype(np.uint8)
-            M = cv2.moments(img_u8)
+            
+            M = cv2.moments(img_raw)
             if M["m00"] != 0:
                 cx = int(M["m10"] / M["m00"])
                 cy = int(M["m01"] / M["m00"])
             else:
-                core = self.core_finder(orientation_map, block_size=16) 
-                if core:
-                    cx, cy, _ = core
-                else:
-                    cy, cx = img_data.shape[0]//2, img_data.shape[1]//2
+                cy, cx = img_raw.shape[0]//2, img_raw.shape[1]//2
+
         except:
-            cy, cx = img_data.shape[0]//2, img_data.shape[1]//2
+            cy, cx = img_raw.shape[0]//2, img_raw.shape[1]//2
             
         # Padding & Cropping
         half = self.img_size // 2
-        padded = np.pad(img_data, ((half, half), (half, half)), mode='constant', constant_values=0)
+        padded = np.pad(img_norm, ((half, half), (half, half)), mode='constant', constant_values=0)
         cy += half
         cx += half
         patch = padded[cy-half:cy+half, cx-half:cx+half]
         
-        # Dilation
-        kernel = np.ones((3,3), np.uint8)
-        patch_uint8 = patch.astype(np.uint8)
-        patch_thick = cv2.dilate(patch_uint8, kernel, iterations=1)
 
-        patch = patch_thick.astype(np.float32) / 255.0
+        patch = np.clip(patch, -3.0, 3.0)
         return patch
 
     def __getitem__(self, idx):
         g1, g2, label = self.pairs[idx]
-        p1 = self.preprocess_image(g1.skeleton, g1.orientation_map)
-        p2 = self.preprocess_image(g2.skeleton, g2.orientation_map)
+        p1 = self.preprocess_image(g1.img_path)
+        p2 = self.preprocess_image(g2.img_path)
         
         if self.augment:
-             p1_u8 = (p1 * 255).astype(np.uint8)
-             p2_u8 = (p2 * 255).astype(np.uint8)
-             img1 = self.transform(p1_u8)
-             img2 = self.transform(p2_u8)
+            p1_min, p1_max = p1.min(), p1.max()
+            p2_min, p2_max = p2.min(), p2.max()
+            
+            p1_u8 = ((p1 - p1_min) / (p1_max - p1_min + 1e-6) * 255).astype(np.uint8)
+            p2_u8 = ((p2 - p2_min) / (p2_max - p2_min + 1e-6) * 255).astype(np.uint8)
+
+            img1 = self.transform(p1_u8)
+            img2 = self.transform(p2_u8)
+
         else:
              img1 = torch.from_numpy(p1).unsqueeze(0)
              img2 = torch.from_numpy(p2).unsqueeze(0)

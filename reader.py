@@ -59,7 +59,7 @@ def load_users(data_dir):
 
                     # Or load with cv2:
                     img = cv2.imread(img_path, 0)  # grayscale
-                    group.append(img)
+                    group.append((img,img_path))
 
                 finger_groups.append(group)
                 users[uid]["fingers"][hand] =  finger_groups

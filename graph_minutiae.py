@@ -56,7 +56,7 @@ class GraphMinutiae:
             minutiae[:, 2].astype(np.float32)
         ])
 
-    def _build_single_graph(self, minutiae, orientation_map, skeleton, graph_id):
+    def _build_single_graph(self, minutiae, orientation_map, skeleton,img_path, graph_id):
         """
         UPDATED: Now accepts 'skeleton' argument and stores it in the graph object.
         """
@@ -108,6 +108,7 @@ class GraphMinutiae:
         graph.orientation_map = orientation_map
         # --- NEW: Store Skeleton ---
         graph.skeleton = skeleton 
+        graph.img_path = img_path
         return graph
 
     @staticmethod
@@ -188,9 +189,10 @@ class GraphMinutiae:
                         minutiae = impression_data["minutiae"]
                         orientation_map = impression_data["orientation_map"]
                         # --- NEW: Extract Skeleton ---
-                        skeleton = impression_data["skeleton"] 
+                        skeleton = impression_data["skeleton"]
+                        img_path = impression_data["img_path"]  
                         
-                        graph = self._build_single_graph(minutiae, orientation_map, skeleton, graph_id)
+                        graph = self._build_single_graph(minutiae, orientation_map, skeleton,img_path, graph_id)
                         if graph is not None:
                             meta_info = {'graph': graph, 'user_id': uid, 'hand': hand,
                                          'finger_idx': finger_idx, 'impression_idx': impr_idx, 'graph_id': graph_id}
