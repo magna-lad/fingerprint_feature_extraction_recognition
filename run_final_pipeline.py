@@ -33,7 +33,7 @@ torch.backends.cudnn.benchmark = False
 
 # --- CONFIGURATION ---
 NUM_CNN_MODELS = 3      # Ensemble Size
-BATCH_SIZE = 64
+BATCH_SIZE = 128
 EPOCHS = 35             # Slightly reduced epochs since we train 3 models
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 DATA_FILE = '/kaggle/input/processed-datta/kaggle/working/biometric_cache/processed_data.pkl'
@@ -60,7 +60,7 @@ def train_one_cnn_model(model_idx, train_loader, val_loader):
     
     model = DeeperCNN().to(DEVICE)
     criterion = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)  # ← FIXED: 1e-3 → 1e-4
+    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=1e-4)  # ← FIXED: 1e-3 → 1e-4
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(  # ← FIXED: Changed scheduler
         optimizer, mode='min', factor=0.5, patience=3
     )

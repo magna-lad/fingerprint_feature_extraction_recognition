@@ -74,18 +74,17 @@ class FingerprintTextureDataset(Dataset):
         p1 = self.preprocess_image(g1.img_path)
         p2 = self.preprocess_image(g2.img_path)
         
-        if self.augment:
-            p1_min, p1_max = p1.min(), p1.max()
-            p2_min, p2_max = p2.min(), p2.max()
-            
-            p1_u8 = ((p1 - p1_min) / (p1_max - p1_min + 1e-6) * 255).astype(np.uint8)
-            p2_u8 = ((p2 - p2_min) / (p2_max - p2_min + 1e-6) * 255).astype(np.uint8)
+        p1_min, p1_max = p1.min(), p1.max()
+        p2_min, p2_max = p2.min(), p2.max()
+        p1_u8 = ((p1 - p1_min) / (p1_max - p1_min + 1e-6) * 255).astype(np.uint8)
+        p2_u8 = ((p2 - p2_min) / (p2_max - p2_min + 1e-6) * 255).astype(np.uint8)
 
-            img1 = self.transform(p1_u8)
+        if self.augment:
+            img1 = self.transform(p1_u8)  # ToTensor included
             img2 = self.transform(p2_u8)
         else:
-            img1 = torch.from_numpy(p1).unsqueeze(0)
-            img2 = torch.from_numpy(p2).unsqueeze(0)
+            img1 = transforms.ToTensor()(p1_u8).squeeze(0).unsqueeze(0)  
+            img2 = transforms.ToTensor()(p2_u8).squeeze(0).unsqueeze(0)
         
         return img1, img2, torch.tensor(label, dtype=torch.float32)
 
