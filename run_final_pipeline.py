@@ -62,7 +62,7 @@ def train_one_cnn_model(model_idx, train_loader, val_loader):
     criterion = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)  # ← FIXED: 1e-3 → 1e-4
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(  # ← FIXED: Changed scheduler
-        optimizer, mode='min', factor=0.5, patience=3, verbose=True
+        optimizer, mode='min', factor=0.5, patience=3
     )
     
     save_path = os.path.join(OUTPUT_DIR, f'cnn_v{model_idx}.pth')
@@ -153,7 +153,7 @@ def run_hybrid_system():
     
     xgb_model = xgb.XGBClassifier(n_estimators=600, max_depth=6, learning_rate=0.02, 
                                   eval_metric='logloss', early_stopping_rounds=50, n_jobs=-1,random_state=SEED)
-    xgb_model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+    xgb_model.fit(X_train, y_train, eval_set=[(X_val, y_val)])
     
     # Store XGBoost Predictions
     xgb_val_probs = xgb_model.predict_proba(X_val)[:, 1]
