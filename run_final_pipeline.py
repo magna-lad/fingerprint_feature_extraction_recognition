@@ -60,8 +60,10 @@ def train_one_cnn_model(model_idx, train_loader, val_loader):
     
     model = DeeperCNN().to(DEVICE)
     criterion = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1e-3, epochs=EPOCHS, steps_per_epoch=len(train_loader))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)  # ← FIXED: 1e-3 → 1e-4
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(  # ← FIXED: Changed scheduler
+        optimizer, mode='min', factor=0.5, patience=3, verbose=True
+    )
     
     save_path = os.path.join(OUTPUT_DIR, f'cnn_v{model_idx}.pth')
     stopper = EarlyStopping(patience=8, path=save_path)
@@ -72,22 +74,26 @@ def train_one_cnn_model(model_idx, train_loader, val_loader):
         
         # TQDM bar
         train_bar = tqdm(train_loader, desc=f"M{model_idx+1} Ep {epoch+1}/{EPOCHS}", leave=False)
+        
         for img1, img2, label in train_bar:
             img1, img2, label = img1.to(DEVICE), img2.to(DEVICE), label.to(DEVICE)
+            
             optimizer.zero_grad()
             logits = model(img1, img2)
             loss = criterion(logits, label)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # stopping exploding gradients
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
-            scheduler.step()
+            # REMOVED: scheduler.step() - not needed for ReduceLROnPlateau
+            
             t_loss += loss.item()
             train_bar.set_postfix({'loss': f"{loss.item():.4f}"})
-            
+        
         # Validation
         model.eval()
         v_loss = 0
         preds, labels_list = [], []
+        
         with torch.no_grad():
             for img1, img2, label in val_loader:
                 img1, img2, label = img1.to(DEVICE), img2.to(DEVICE), label.to(DEVICE)
@@ -101,7 +107,9 @@ def train_one_cnn_model(model_idx, train_loader, val_loader):
         
         print(f"  M{model_idx+1} Ep {epoch+1}: Val Loss {avg_v_loss:.4f} | Val AUC {v_auc:.4f}")
         
+        scheduler.step(avg_v_loss)  # ← ADDED: Step scheduler based on val loss
         stopper(avg_v_loss, model)
+        
         if stopper.early_stop:
             print("  > Early Stopping.")
             break
@@ -111,6 +119,7 @@ def train_one_cnn_model(model_idx, train_loader, val_loader):
     del optimizer
     torch.cuda.empty_cache()
     gc.collect()
+    
     return save_path
 
 def run_hybrid_system():
@@ -150,6 +159,27 @@ def run_hybrid_system():
     xgb_val_probs = xgb_model.predict_proba(X_val)[:, 1]
     xgb_test_probs = xgb_model.predict_proba(X_test)[:, 1]
     print(f"   > XGBoost Best Iteration: {xgb_model.best_iteration}")
+
+    # Calculate XGBoost standalone metrics
+    fpr_xgb_val, tpr_xgb_val, _ = roc_curve(y_val, xgb_val_probs)
+    auc_xgb_val = auc(fpr_xgb_val, tpr_xgb_val)
+    
+    fpr_xgb_test, tpr_xgb_test, _ = roc_curve(y_test, xgb_test_probs)
+    auc_xgb_test = auc(fpr_xgb_test, tpr_xgb_test)
+    
+    eer_xgb_test = calculate_eer(y_test, xgb_test_probs)
+    
+    print("\n" + "="*60)
+    print(" XGBOOST STANDALONE RESULTS")
+    print("="*60)
+    print(f"   Validation AUC: {auc_xgb_val:.4f}")
+    print(f"   Test AUC:       {auc_xgb_test:.4f}")
+    print(f"   Test EER:       {eer_xgb_test:.4f}")
+    print("="*60)
+    
+    # [3] TRAIN CNN ENSEMBLE
+    print(f"\n[3] Training CNN Ensemble ({NUM_CNN_MODELS} Models)...")
+    
     
     # [3] TRAIN CNN ENSEMBLE
     print(f"\n[3] Training CNN Ensemble ({NUM_CNN_MODELS} Models)...")
