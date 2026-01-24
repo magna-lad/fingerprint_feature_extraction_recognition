@@ -13,17 +13,10 @@ class minutiaLoader:  # will only handle loading of the minutia, segmentation
         self.block = 16
 
         #self.img= self.load()
-        self.normalised_img= self.normalise(self.img)
+        self.normalised_img= self.normalise(self.img) 
         self.segmented_img, self.norm_img, self.mask = self.segmentation(self.normalised_img)
 
         
-
-    #def load(self):
-        #img = cv2.imread(self.img_path,0) # image is already loaded in grayscale
-        #if img is None:
-            #raise ValueError(f"Could not load image from {self.img_path}")
-        #img = cv2.resize(img,(96,96))
-        #return img
     
     # normalise the image
 
@@ -62,10 +55,9 @@ class minutiaLoader:  # will only handle loading of the minutia, segmentation
         segmented_img *= mask
         im = self.normalise(img)
 
-        mean_val = np.mean(im[mask==0])
-        std_val = np.std(im[mask==0])
+        mean_val = np.mean(im[mask==1])
+        std_val = np.std(im[mask==1])
         norm_img = (im - mean_val)/(std_val)
     
         return segmented_img, norm_img, mask
-    
     
