@@ -25,7 +25,7 @@ class minutiaLoader:  # will only handle loading of the minutia, segmentation
     
     # segmenting the image to filter out the ROI
 
-    def segmentation(self,img,threshold=0.2 ):
+    def segmentation(self,img,threshold=0.5 ):  # automatic calculator
         (h,w) = img.shape #r,c
         threshold = np.std(img)*threshold
 
