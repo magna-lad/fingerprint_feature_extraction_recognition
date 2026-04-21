@@ -469,126 +469,126 @@ class skeleton_maker:
 # testing
 
 
-#
+
 #print('start')
-## --- TESTING BLOCK ---
-print('start')
-data_dir = r""  # input the directory path
-print(f"Loading: {data_dir}")
-
-img = cv2.imread(data_dir, 0) 
-
-if img is None:
-    print("Error: Could not find image. Check the path!")
-else:
-    print("Image loaded successfully. Processing...")
-    
-    # 1. Initialize Loader
-    fingerprint = minutiaLoader(img)
+### --- TESTING BLOCK ---
+#print('start')
+#data_dir = r""  # input the directory path
+#print(f"Loading: {data_dir}")
 #
-    ## 2. Create the Figure and Subplots
-    ## (1 row, 4 columns)
-    #fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+#img = cv2.imread(data_dir, 0)
 #
-    ## Subplot 1: Original Image
-    #axes[0].imshow(img, cmap="gray")
-    #axes[0].set_title("Original Image")
-    #axes[0].axis('off')
+#if img is None:
+#    print("Error: Could not find image. Check the path!")
+#else:
+#    print("Image loaded successfully. Processing...")
+#    
+#    # 1. Initialize Loader
+#    fingerprint = minutiaLoader(img)
+##
+#    ## 2. Create the Figure and Subplots
+#    ## (1 row, 4 columns)
+#    #fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+##
+#    ## Subplot 1: Original Image
+#    #axes[0].imshow(img, cmap="gray")
+#    #axes[0].set_title("Original Image")
+#    #axes[0].axis('off')
+##
+#    ## Subplot 2: Normalized
+#    #axes[1].imshow(fingerprint.norm_img, cmap="gray")
+#    #axes[1].set_title("Normalized")
+#    #axes[1].axis('off')
+##
+#    ## Subplot 3: Segmented (ROI)
+#    #axes[2].imshow(fingerprint.segmented_img, cmap="gray")
+#    #axes[2].set_title("Segmented ROI")
+#    #axes[2].axis('off')
+##
+#    ## Subplot 4: Mask
+#    #axes[3].imshow(fingerprint.mask, cmap="gray")
+#    #axes[3].set_title("Segmentation Mask")
+#    #axes[3].axis('off')
+##
+#    ## Finalize Layout
+#    #plt.tight_layout()
+#    #
+#    #print("Opening display window...")
+#    #plt.show() 
+#    ## 3. NOW UNCOMMENT AND RUN THE SKELETON PART
+#    #print("Starting Skeleton Processing...")
+#    #
+##
+#    # 2. Run Pipeline
+#    skeleton_image = skeleton_maker(
+#        fingerprint.normalised_img,
+#        fingerprint.segmented_img,
+#        fingerprint.norm_img,
+#        fingerprint.mask,
+#        fingerprint.block
+#    )
+#    
+#    # Execute the heavy lifting
+#    angles, freq, enhanced, thin, minu_viz = skeleton_image.fingerprintPipeline()
+#    # 3. Create Clean Dashboard Visualization
+#    plt.figure(figsize=(20, 10))
 #
-    ## Subplot 2: Normalized
-    #axes[1].imshow(fingerprint.norm_img, cmap="gray")
-    #axes[1].set_title("Normalized")
-    #axes[1].axis('off')
+#    # --- Plot 1: Original ---
+#    
 #
-    ## Subplot 3: Segmented (ROI)
-    #axes[2].imshow(fingerprint.segmented_img, cmap="gray")
-    #axes[2].set_title("Segmented ROI")
-    #axes[2].axis('off')
+#    # --- Plot 2: Enhanced (Gabor) ---
+#    plt.subplot(1, 3, 1)
+#    plt.imshow(enhanced, cmap='gray')
+#    plt.title("1. Gabor Enhancement")
+#    plt.axis('off') # <--- SWITCH OFF AXIS
 #
-    ## Subplot 4: Mask
-    #axes[3].imshow(fingerprint.mask, cmap="gray")
-    #axes[3].set_title("Segmentation Mask")
-    #axes[3].axis('off')
+#    # --- Plot 3: Skeleton ---
+#    plt.subplot(1, 3, 2)
+#    plt.imshow(thin, cmap='gray')
+#    plt.title("2. Skeletonized")
+#    plt.axis('off') # <--- SWITCH OFF AXIS
 #
-    ## Finalize Layout
-    #plt.tight_layout()
-    #
-    #print("Opening display window...")
-    #plt.show() 
-    ## 3. NOW UNCOMMENT AND RUN THE SKELETON PART
-    #print("Starting Skeleton Processing...")
-    #
+#    # --- Plot 4: Minutiae ---
+#    plt.subplot(1, 3, 3)
+#    plt.imshow(minu_viz)
+#    plt.title("3. Detected Minutiae")
+#    plt.axis('off') # <--- SWITCH OFF AXIS
 #
-    # 2. Run Pipeline
-    skeleton_image = skeleton_maker(
-        fingerprint.normalised_img,
-        fingerprint.segmented_img,
-        fingerprint.norm_img,
-        fingerprint.mask,
-        fingerprint.block
-    )
-    
-    # Execute the heavy lifting
-    angles, freq, enhanced, thin, minu_viz = skeleton_image.fingerprintPipeline()
-    # 3. Create Clean Dashboard Visualization
-    plt.figure(figsize=(20, 10))
-
-    # --- Plot 1: Original ---
-    
-
-    # --- Plot 2: Enhanced (Gabor) ---
-    plt.subplot(1, 3, 1)
-    plt.imshow(enhanced, cmap='gray')
-    plt.title("1. Gabor Enhancement")
-    plt.axis('off') # <--- SWITCH OFF AXIS
-
-    # --- Plot 3: Skeleton ---
-    plt.subplot(1, 3, 2)
-    plt.imshow(thin, cmap='gray')
-    plt.title("2. Skeletonized")
-    plt.axis('off') # <--- SWITCH OFF AXIS
-
-    # --- Plot 4: Minutiae ---
-    plt.subplot(1, 3, 3)
-    plt.imshow(minu_viz)
-    plt.title("3. Detected Minutiae")
-    plt.axis('off') # <--- SWITCH OFF AXIS
-
-    plt.tight_layout()
-    plt.show()
-
-    mf = minutiae_filter(thin,skeleton_image.minutiae_list,fingerprint.mask)
-
-    skeleton,filtered=mf.filter_all()
-    #3. Create Clean Dashboard Visualization
-
-    filtered_viz = cv2.cvtColor(skeleton.copy(), cv2.COLOR_GRAY2RGB)
-    colors = {0: (150, 0, 0), 1: (0, 150, 0)} # 0: ending, 1: bifurcation
-
-    for pt in filtered:
-        x, y, m_type, angle = int(pt[0]), int(pt[1]), pt[2], pt[3]
-        
-        # Draw slim markers (radius 2, thickness 1)
-        cv2.circle(filtered_viz, (x, y), 2, colors[m_type], 2)
-        
-        # Draw orientation tails
-        length = 8
-        end_x = int(x + length * math.cos(math.radians(angle)))
-        end_y = int(y + length * math.sin(math.radians(angle)))
-        cv2.line(filtered_viz, (x, y), (end_x, end_y), colors[m_type], 1)
-
-    # 5. Dashboard Visualization
-    #plt.figure(figsize=(5, 5))
-
-    plt.subplot(1, 2, 1)
-    plt.imshow(minu_viz) # Original noisy detection image
-    plt.title("1. Before Filtering")
-    plt.axis('off')
-
-    plt.subplot(1, 2, 2)
-    plt.imshow(filtered_viz) # The image we just drew from the 'filtered' list
-    plt.title("2. After Filtering")
-    plt.axis('off')
-
-    plt.tight_layout()
-    plt.show()
+#    plt.tight_layout()
+#    plt.show()
+#
+#    mf = minutiae_filter(thin,skeleton_image.minutiae_list,fingerprint.mask)
+#
+#    skeleton,filtered=mf.filter_all()
+#    #3. Create Clean Dashboard Visualization
+#
+#    filtered_viz = cv2.cvtColor(skeleton.copy(), cv2.COLOR_GRAY2RGB)
+#    colors = {0: (150, 0, 0), 1: (0, 150, 0)} # 0: ending, 1: bifurcation
+#
+#    for pt in filtered:
+#        x, y, m_type, angle = int(pt[0]), int(pt[1]), pt[2], pt[3]
+#        
+#        # Draw slim markers (radius 2, thickness 1)
+#        cv2.circle(filtered_viz, (x, y), 2, colors[m_type], 2)
+#        
+#        # Draw orientation tails
+#        length = 8
+#        end_x = int(x + length * math.cos(math.radians(angle)))
+#        end_y = int(y + length * math.sin(math.radians(angle)))
+#        cv2.line(filtered_viz, (x, y), (end_x, end_y), colors[m_type], 1)
+#
+#    # 5. Dashboard Visualization
+#    #plt.figure(figsize=(5, 5))
+#
+#    plt.subplot(1, 2, 1)
+#    plt.imshow(minu_viz) # Original noisy detection image
+#    plt.title("1. Before Filtering")
+#    plt.axis('off')
+#
+#    plt.subplot(1, 2, 2)
+#    plt.imshow(filtered_viz) # The image we just drew from the 'filtered' list
+#    plt.title("2. After Filtering")
+#    plt.axis('off')
+#
+#    plt.tight_layout()
+#    plt.show()
