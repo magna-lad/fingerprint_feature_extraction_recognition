@@ -456,7 +456,7 @@ class skeleton_maker:
        gbr_img = self.gabor_filter()
        img_thin = self.skeletonize()
        minutiaes= self.calculate_minutiaes()
-       self.visualize_angles()
+       #self.visualize_angles()
        #plt.imshow(img)
        #self.plot_orientation_field()
        
