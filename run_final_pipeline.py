@@ -144,6 +144,15 @@ def run_hybrid_system():
     
     if len(val_pairs) == 0: print("CRITICAL ERROR: Val set empty."); return
 
+
+    missing = 0
+    for g1, g2, label in train_pairs[:2000]:
+        if g1.img_path is None or not os.path.exists(g1.img_path):
+            missing += 1
+        if g2.img_path is None or not os.path.exists(g2.img_path):
+            missing += 1
+    print(f"Missing/invalid image paths: {missing} / 4000 checked")
+    
     # [2] TRAIN XGBOOST
     print("\n[2] Training XGBoost (Geometry Branch)...")
     X_train, y_train = prepare_xgb_features(train_pairs, "Extract Train")
@@ -284,7 +293,7 @@ def run_hybrid_system():
 
     for name, probs in [("XGBoost", xgb_test_probs),("CNN Ensemble", ensemble_test_probs),("Hybrid", final_probs)]:
         print(name, tar_at_far(y_test, probs))
-    
+       
         # --- d-prime ---
     print("Hybrid d-prime:", dprime(y_test, final_probs))
 
