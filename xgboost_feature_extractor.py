@@ -82,7 +82,7 @@ def create_feature_vector_for_pair(graph1, graph2):
     diff = np.abs(f1 - f2)
     
     # 2. Chi-Squared for Histograms (approximation for whole vector)
-    chi_sq = (f1 - f2)**2 / (np.abs(f1) + np.abs(f2) + 1e-6)
+    chi_sq = (f1 - f2)**2 / (f1 + f2 + 1e-6)
     
     # 3. Product (Correlation)
     prod = f1 * f2
