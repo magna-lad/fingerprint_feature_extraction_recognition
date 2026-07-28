@@ -36,7 +36,7 @@ NUM_CNN_MODELS = 3      # Ensemble Size
 BATCH_SIZE = 128
 EPOCHS = 35             # Slightly reduced epochs since we train 3 models
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-DATA_FILE = '/kaggle/input/processed-datta/kaggle/working/biometric_cache/processed_data.pkl'
+DATA_FILE = '/kaggle/input/datasets/magnalad/processeddata400/kaggle/working/biometric_cache/processed_data.pkl'
 
 OUTPUT_DIR = "."        # In Kaggle, this maps to /kaggle/working/
 
@@ -151,8 +151,8 @@ def run_hybrid_system():
     X_val = scaler.transform(X_val)
     X_test = scaler.transform(X_test)
     
-    xgb_model = xgb.XGBClassifier(n_estimators=600, max_depth=6, learning_rate=0.02, 
-                                  eval_metric='logloss', early_stopping_rounds=50, n_jobs=-1,random_state=SEED)
+    xgb_model = xgb.XGBClassifier(n_estimators=2000, max_depth=6, learning_rate=0.02, 
+                                  eval_metric='logloss', early_stopping_rounds=60, n_jobs=-1,random_state=SEED)
     xgb_model.fit(X_train, y_train, eval_set=[(X_val, y_val)])
     
     # Store XGBoost Predictions
@@ -255,7 +255,8 @@ def run_hybrid_system():
     # 1. XGB Only
     fpr_x, tpr_x, _ = roc_curve(y_test, xgb_test_probs)
     auc_x = auc(fpr_x, tpr_x)
-    
+    eer_c = calculate_eer(y_test, ensemble_test_probs)
+
     # 2. CNN Ensemble Only
     fpr_c, tpr_c, _ = roc_curve(y_test, ensemble_test_probs)
     auc_c = auc(fpr_c, tpr_c)
@@ -270,6 +271,7 @@ def run_hybrid_system():
     print("-" * 40)
     print(f"XGBoost Only AUC:     {auc_x:.4f}")
     print(f"CNN Ensemble AUC:     {auc_c:.4f}")
+    print(f"CNN Ensemble EER:     {eer_c:.4f}")
     print(f"FINAL HYBRID AUC:     {auc_h:.4f}")
     print(f"FINAL HYBRID EER:     {final_eer:.4f}")
     print("-" * 40)
