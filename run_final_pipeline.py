@@ -18,6 +18,10 @@ from graph_minutiae import GraphMinutiae
 from load_save import load_users_dictionary
 from xgboost_feature_extractor import create_feature_vector_for_pair
 from cnn_model import DeeperCNN, FingerprintTextureDataset, EarlyStopping
+from additional_metrics import (
+        tar_at_far, dprime, bootstrap_metric_ci,
+        paired_bootstrap_auc_diff, plot_det_curve
+    )
 
 
 
@@ -275,6 +279,29 @@ def run_hybrid_system():
     print(f"FINAL HYBRID AUC:     {auc_h:.4f}")
     print(f"FINAL HYBRID EER:     {final_eer:.4f}")
     print("-" * 40)
+
+
+
+    for name, probs in [("XGBoost", xgb_test_probs),("CNN Ensemble", ensemble_test_probs),("Hybrid", final_probs)]:
+        print(name, tar_at_far(y_test, probs))
+    
+        # --- d-prime ---
+    print("Hybrid d-prime:", dprime(y_test, final_probs))
+
+    # --- Bootstrap CI on Hybrid AUC/EER ---
+    mean_auc, ci_auc = bootstrap_metric_ci(y_test, final_probs)
+    print(f"Hybrid AUC: {mean_auc:.4f}  95% CI: {ci_auc}")
+
+    # --- Is the fusion improvement over CNN-only real? ---
+    result = paired_bootstrap_auc_diff(y_test, final_probs, ensemble_test_probs)
+    print("Hybrid vs CNN-only AUC diff:", result)
+
+    # --- DET curve for all three systems ---
+    plot_det_curve({
+        "XGBoost": (y_test, xgb_test_probs),
+        "CNN Ensemble": (y_test, ensemble_test_probs),
+        "Hybrid": (y_test, final_probs),
+    }, save_path="det_curve.png")
     
     try:
         plt.close('all')

@@ -78,7 +78,7 @@ def main():
                                 users = {
                                         "000": {
                                             "fingers": {
-                                                "L": [ [{
+                                                "L": [ [{a
                                                         "skeleton"=[],
                                                         "minutiae"=[],
                                                         "mask"=[],
