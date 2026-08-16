@@ -113,11 +113,11 @@ class ResidualBlock(nn.Module):
 
 
 class DeeperCNN(nn.Module):
-    """CNN without STN - preprocessing handles alignment. Works with 160×160 images."""
+    
     def __init__(self):
         super(DeeperCNN, self).__init__()
         
-        # NO STN - alignment handled in preprocessing via center-of-mass
+        
         
         self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(32)
@@ -149,7 +149,6 @@ class DeeperCNN(nn.Module):
         )
 
     def forward_one(self, x):
-        # Direct processing - no STN alignment
         x = F.leaky_relu(self.bn1(self.conv1(x)), 0.1)
         x = self.layer1(x)
         x = self.layer2(x)
