@@ -1,6 +1,6 @@
 # Hybrid Fingerprint Recognition System
 
-This project implements a multi-modal biometric authentication system that fuses **Geometric Graph Analysis** (using Minutiae topology) with **Deep Texture Analysis** (using CNNs with Spatial Transformer Networks).
+This project implements a multi-modal biometric authentication system that fuses **Geometric Graph Analysis** (using Minutiae topology) with **Deep Texture Analysis** (using CNNs).
 
 ## 📂 Project Structure
 
