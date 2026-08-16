@@ -136,7 +136,7 @@ This script trains the models and evaluates them on the validation/test split us
 ### Visual Score (\(P_{cnn}\))
 
 - A **\(96 \times 96\)** patch centered at the fingerprint **core** is cropped as the visual region of interest, consistent with ROI-based CNN fingerprint processing.
-- An **ensemble of 3 CNNs** with **Spatial Transformer Networks (STN)** modules predicts similarity, improving robustness to small misalignments and local distortions.
+- An **ensemble of 3 CNNs** modules predicts similarity.
 
 ### Fusion Score
 
