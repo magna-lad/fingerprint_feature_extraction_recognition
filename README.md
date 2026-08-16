@@ -36,7 +36,6 @@ The project is divided into processing, feature extraction, and model training m
 
 ### 4. Visual Branch (Deep Learning)
 *   **`cnn_model.py`**:
-    *   **STN (Spatial Transformer Network):** Aligns fingerprint patches automatically.
     *   **DeeperCNN:** A ResNet-based Siamese network for embedding extraction.
     *   **FingerprintTextureDataset:** Handles core-alignment and data augmentation.
 
