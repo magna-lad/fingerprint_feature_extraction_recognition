@@ -40,7 +40,7 @@ NUM_CNN_MODELS = 3      # Ensemble Size
 BATCH_SIZE = 128
 EPOCHS = 35             # Slightly reduced epochs since we train 3 models
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-DATA_FILE = r'/kaggle/working/biometric_cache/processed_data.pkl'
+DATA_FILE = r'/kaggle/input/datasets/magnalad/processed/biometric_cache/processed_data.pkl'
 
 OUTPUT_DIR = "."        # In Kaggle, this maps to /kaggle/working/
 
