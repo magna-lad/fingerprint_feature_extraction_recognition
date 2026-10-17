@@ -26,7 +26,7 @@ from additional_metrics import (
 from revision_analyses import (
     protocol_report, dead_features, xgb_feature_ablation,
     per_model_probs, ensemble_size_ablation, alpha_sweep,
-    val_selected_operating_points, subject_bootstrap, pair_uids,
+    val_selected_operating_points, subject_bootstrap, pair_uids,build_pairs_per_split
 )
 
 
@@ -141,11 +141,13 @@ def run_hybrid_system():
 
     analyzer = GraphMinutiae(users)
     analyzer.graph_maker()
-    all_pairs = analyzer.create_graph_pairs(num_impostors_per_genuine=3)
+    #all_pairs = analyzer.create_graph_pairs(num_impostors_per_genuine=3)
+    train_u, val_u, test_u = analyzer.get_user_splits(train_ratio=0.70, val_ratio=0.15)
     
     # Split
     train_u, val_u, test_u = analyzer.get_user_splits(train_ratio=0.70, val_ratio=0.15) 
-    train_pairs, val_pairs, test_pairs = analyzer.split_pairs_by_user(all_pairs, train_u, val_u, test_u)
+
+    train_pairs, val_pairs, test_pairs = build_pairs_per_split(analyzer, train_u, val_u, test_u)
     
     if len(val_pairs) == 0:
         print("CRITICAL ERROR: Val set empty.")

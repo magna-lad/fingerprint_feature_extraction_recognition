@@ -247,3 +247,150 @@ def subject_bootstrap(y, scores, uid1, uid2, metric="auc", n_boot=2000,
         print(f"{names[0]} - {names[1]}: {d.mean():+.4f}  CI [{out['diff'][1]:+.4f}, "
               f"{out['diff'][2]:+.4f}]  one-sided p (diff<=0) = {out['diff'][3]:.4f}")
     return out
+
+
+
+# 7. Per-split pair construction 
+def build_pairs_per_split(analyzer, train_users, val_users, test_users,
+                          impostors_per_genuine=None, same_finger_type_frac=0.0,
+                          seed=42):
+    """
+    impostors_per_genuine : dict overriding {"train": 3, "val": 5, "test": 10}.
+        Larger val/test ratios give FAR=0.1% a usable resolution (n impostors
+        pairs -> 1/n). Raising val also slows per-epoch CNN validation.
+    same_finger_type_frac : fraction of impostors forced to share hand and
+        finger index with the other print (harder, closer to deployment).
+        0.0 reproduces 'any finger of any other subject'.
+    Genuine = every pair of impressions of the same finger (as before).
+    Returns train_pairs, val_pairs, test_pairs: lists of (graph1, graph2, label).
+    """
+    ratio = {"train": 3, "val": 5, "test": 10}
+    if impostors_per_genuine:
+        ratio.update(impostors_per_genuine)
+    rng = np.random.default_rng(seed)
+
+    user_split = {}
+    for name, us in (("train", train_users), ("val", val_users), ("test", test_users)):
+        for u in us:
+            user_split[u] = name
+    by_split = {"train": [], "val": [], "test": []}
+    for info in analyzer.fingerprint_graphs:
+        s = user_split.get(info["user_id"])
+        if s is not None:
+            by_split[s].append(info)
+
+    result = {}
+    print(f"{'split':<6}{'genuine':>9}{'impostor':>10}{'imp:gen':>9}")
+    for name, infos in by_split.items():
+        # ---- genuine: same user, hand, finger; all impression pairs
+        groups = {}
+        for k, info in enumerate(infos):
+            groups.setdefault((info["user_id"], info["hand"], info["finger_idx"]), []).append(k)
+        genuine = [(infos[a]["graph"], infos[b]["graph"], 1)
+                   for ks in groups.values() for a, b in combinations(ks, 2)]
+
+        # ---- impostors: different users, same split, unique unordered pairs
+        n_target = int(round(ratio[name] * len(genuine)))
+        uid = np.array([i["user_id"] for i in infos])
+        n = len(infos)
+        seen, impostor = set(), []
+
+        def add(a, b):
+            if a == b or uid[a] == uid[b]:
+                return False
+            key = (a, b) if a < b else (b, a)
+            if key in seen:
+                return False
+            seen.add(key)
+            impostor.append((infos[a]["graph"], infos[b]["graph"], 0))
+            return True
+
+        n_same = int(round(same_finger_type_frac * n_target))
+        if n_same > 0:
+            tgroups = {}
+            for k, info in enumerate(infos):
+                tgroups.setdefault((info["hand"], info["finger_idx"]), []).append(k)
+            tgroups = [np.array(v) for v in tgroups.values() if len(v) >= 2]
+            attempts = 0
+            while len(impostor) < n_same and attempts < 50 * n_same:
+                attempts += 1
+                g = tgroups[rng.integers(len(tgroups))]
+                a, b = rng.choice(g, 2, replace=False)
+                add(int(a), int(b))
+        attempts, cap = 0, 50 * max(n_target, 1)
+        while len(impostor) < n_target and attempts < cap:
+            attempts += 1
+            a, b = rng.integers(0, n, 2)
+            add(int(a), int(b))
+        if len(impostor) < n_target:
+            print(f"WARNING [{name}]: only {len(impostor)} of {n_target} impostor pairs could be drawn")
+
+        pairs = genuine + impostor
+        order = rng.permutation(len(pairs))
+        result[name] = [pairs[i] for i in order]
+        print(f"{name:<6}{len(genuine):>9}{len(impostor):>10}{len(impostor) / max(len(genuine), 1):>9.2f}")
+    return result["train"], result["val"], result["test"]
+
+
+# ------------------------------------------------------------------
+# 8. Fusion normalisation ablation (Comment 3)
+# ------------------------------------------------------------------
+def _logit(p, eps=1e-6):
+    p = np.clip(np.asarray(p, dtype=float), eps, 1 - eps)
+    return np.log(p / (1 - p))
+
+
+def _fit_norm(method, s_val):
+    """Normaliser parameters are fitted on VALIDATION scores only."""
+    s_val = np.asarray(s_val, dtype=float)
+    if method == "none":
+        return lambda s: np.asarray(s, dtype=float)
+    if method == "minmax":
+        lo, hi = s_val.min(), s_val.max()
+        return lambda s: (np.asarray(s, dtype=float) - lo) / (hi - lo + 1e-12)
+    if method == "zscore":
+        mu, sd = s_val.mean(), s_val.std() + 1e-12
+        return lambda s: (np.asarray(s, dtype=float) - mu) / sd
+    if method == "logit_z":
+        lv = _logit(s_val)
+        mu, sd = lv.mean(), lv.std() + 1e-12
+        return lambda s: (_logit(s) - mu) / sd
+    if method == "rank":
+        ref = np.sort(s_val)
+        return lambda s: np.searchsorted(ref, np.asarray(s, dtype=float), side="right") / len(ref)
+    raise ValueError(method)
+
+
+def fusion_normalization_ablation(y_val, cnn_val, xgb_val, y_test, cnn_test, xgb_test,
+                                  alphas=np.linspace(0, 1, 101)):
+    """For each score normalisation, fit it on val, pick alpha on val AUC
+    (first maximum, as in run_final_pipeline.py), report val/test AUC and test
+    EER. 'none' reproduces the submitted fusion. Also fits a 2-feature
+    logistic-regression stacker on val logits as a learned-weight alternative."""
+    y_val, y_test = np.asarray(y_val), np.asarray(y_test)
+    names = {"none": "none (raw probabilities)", "minmax": "min-max",
+             "zscore": "z-score", "logit_z": "logit + z-score", "rank": "rank / percentile"}
+    rows = {}
+    for m in names:
+        nc, nx = _fit_norm(m, cnn_val), _fit_norm(m, xgb_val)
+        cv, xv, ct, xt = nc(cnn_val), nx(xgb_val), nc(cnn_test), nx(xgb_test)
+        val_aucs = [_auc_eer(y_val, a * cv + (1 - a) * xv)[0] for a in alphas]
+        k = int(np.argmax(val_aucs))
+        a_star = float(alphas[k])
+        t_auc, t_eer = _auc_eer(y_test, a_star * ct + (1 - a_star) * xt)
+        rows[m] = (a_star, val_aucs[k], t_auc, t_eer)
+
+    from sklearn.linear_model import LogisticRegression
+    Zv = np.column_stack([_logit(cnn_val), _logit(xgb_val)])
+    Zt = np.column_stack([_logit(cnn_test), _logit(xgb_test)])
+    lr = LogisticRegression(C=1.0).fit(Zv, y_val)
+    v_auc, _ = _auc_eer(y_val, lr.decision_function(Zv))
+    t_auc, t_eer = _auc_eer(y_test, lr.decision_function(Zt))
+    rows["lr_stacking"] = (float("nan"), v_auc, t_auc, t_eer)
+    names["lr_stacking"] = f"LR stacking (coef cnn={lr.coef_[0][0]:.2f}, xgb={lr.coef_[0][1]:.2f})"
+
+    print(f"{'method':<44}{'alpha':>7}{'val AUC':>10}{'test AUC':>10}{'test EER':>10}")
+    for m, (a, va, ta, te) in rows.items():
+        a_s = f"{a:.2f}" if a == a else "  -"
+        print(f"{names[m]:<44}{a_s:>7}{va:>10.4f}{ta:>10.4f}{te:>10.4f}")
+    return rows
