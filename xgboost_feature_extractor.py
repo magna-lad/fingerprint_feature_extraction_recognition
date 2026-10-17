@@ -23,7 +23,7 @@ def get_graph_summary_features(graph):
     # 2a. Edge Lengths
     if graph.num_edges > 0:
         edge_distances = graph.edge_attr[:, 0].numpy()
-        bins = [0, 20, 40, 60, 80, 100, 150, 300]
+        bins = [20,30, 40, 60, 80, 100, 150, 1000]
         dist_hist, _ = np.histogram(edge_distances, bins=bins)
         # NORMALIZE to probability (Sum=1)
         if dist_hist.sum() > 0: dist_hist = dist_hist / dist_hist.sum()
@@ -36,7 +36,7 @@ def get_graph_summary_features(graph):
     # 2b. Relative Angles
     if graph.num_edges > 0:
         edge_angles = graph.edge_attr[:, 1].numpy()
-        angle_bins = np.linspace(0, 3.14, 8)
+        angle_bins = np.linspace(0, np.pi, 8)
         angle_hist, _ = np.histogram(edge_angles, bins=angle_bins)
         # NORMALIZE
         if angle_hist.sum() > 0: angle_hist = angle_hist / angle_hist.sum()
@@ -57,7 +57,7 @@ def get_graph_summary_features(graph):
         nbrs = NearestNeighbors(n_neighbors=5, algorithm='brute').fit(coords)
         distances, indices = nbrs.kneighbors(coords)
         neighbor_dists = distances[:, 1:].flatten()
-        local_hist, _ = np.histogram(neighbor_dists, bins=[0, 15, 30, 45, 100])
+        local_hist, _ = np.histogram(neighbor_dists, bins=[20, 30, 40, 55, 1000])
         # NORMALIZE
         if local_hist.sum() > 0: local_hist = local_hist / local_hist.sum()
         local_feats.extend(local_hist)
