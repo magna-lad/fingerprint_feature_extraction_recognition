@@ -23,6 +23,11 @@ from additional_metrics import (
         paired_bootstrap_auc_diff, plot_det_curve
     )
 
+from revision_analyses import (
+    protocol_report, dead_features, xgb_feature_ablation,
+    per_model_probs, ensemble_size_ablation, alpha_sweep,
+    val_selected_operating_points, subject_bootstrap, pair_uids,
+)
 
 
 SEED = 42
@@ -142,8 +147,10 @@ def run_hybrid_system():
     train_u, val_u, test_u = analyzer.get_user_splits(train_ratio=0.70, val_ratio=0.15) 
     train_pairs, val_pairs, test_pairs = analyzer.split_pairs_by_user(all_pairs, train_u, val_u, test_u)
     
-    if len(val_pairs) == 0: print("CRITICAL ERROR: Val set empty."); return
-
+    if len(val_pairs) == 0:
+        print("CRITICAL ERROR: Val set empty.")
+        protocol_report(train_pairs, val_pairs, test_pairs)
+        return
 
     missing = 0
     for g1, g2, label in train_pairs[:2000]:
@@ -171,6 +178,8 @@ def run_hybrid_system():
     # Store XGBoost Predictions
     xgb_val_probs = xgb_model.predict_proba(X_val)[:, 1]
     xgb_test_probs = xgb_model.predict_proba(X_test)[:, 1]
+    dead_features(X_train)
+    xgb_feature_ablation(X_train, y_train, X_val, y_val, X_test, y_test)  # refits XGBoost 11 times
     print(f"   > XGBoost Best Iteration: {xgb_model.best_iteration}")
 
     # Calculate XGBoost standalone metrics
@@ -257,7 +266,14 @@ def run_hybrid_system():
         if sc > best_val_auc:
             best_val_auc = sc
             best_alpha = alpha
-            
+
+    mp_val  = per_model_probs(val_loader,  model_paths, DeeperCNN, DEVICE)
+    mp_test = per_model_probs(test_loader, model_paths, DeeperCNN, DEVICE)
+    ensemble_size_ablation(y_test, mp_test, "test")
+
+    alpha_sweep(y_val, ensemble_val_probs, xgb_val_probs,
+            y_test, ensemble_test_probs, xgb_test_probs)
+    
     print(f"  > Best Alpha: {best_alpha:.2f} (CNN Ensemble Weight)")
     print(f"  > Best Val AUC: {best_val_auc:.4f}")
     
@@ -276,6 +292,9 @@ def run_hybrid_system():
     
     # 3. Hybrid
     final_probs = (best_alpha * ensemble_test_probs) + ((1 - best_alpha) * xgb_test_probs)
+    final_val_probs = best_alpha * ensemble_val_probs + (1 - best_alpha) * xgb_val_probs
+    val_selected_operating_points(y_val, final_val_probs, y_test, final_probs)
+
     fpr_h, tpr_h, _ = roc_curve(y_test, final_probs)
     auc_h = auc(fpr_h, tpr_h)
     # Calculate and print EER
@@ -297,13 +316,9 @@ def run_hybrid_system():
         # --- d-prime ---
     print("Hybrid d-prime:", dprime(y_test, final_probs))
 
-    # --- Bootstrap CI on Hybrid AUC/EER ---
-    mean_auc, ci_auc = bootstrap_metric_ci(y_test, final_probs)
-    print(f"Hybrid AUC: {mean_auc:.4f}  95% CI: {ci_auc}")
-
-    # --- Is the fusion improvement over CNN-only real? ---
-    result = paired_bootstrap_auc_diff(y_test, final_probs, ensemble_test_probs)
-    print("Hybrid vs CNN-only AUC diff:", result)
+    u1, u2 = pair_uids(test_pairs)
+    subject_bootstrap(y_test, {"hybrid": final_probs, "cnn": ensemble_test_probs}, u1, u2, metric="auc")
+    subject_bootstrap(y_test, {"hybrid": final_probs, "cnn": ensemble_test_probs}, u1, u2, metric="eer")
 
     # --- DET curve for all three systems ---
     plot_det_curve({
@@ -338,9 +353,12 @@ def run_hybrid_system():
         save_path = os.path.join(OUTPUT_DIR, 'kaggle_final_results.png')
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"\n[SUCCESS] Graph saved to: {save_path}")
-            
+
+    
     except Exception as e:
         print(f"\n[ERROR] Plotting failed: {e}")
+
+    np.savez("scores.npz", y_val=y_val, y_test=y_test, xgb_val=xgb_val_probs, xgb_test=xgb_test_probs, cnn_val=ensemble_val_probs, cnn_test=ensemble_test_probs)
 
 if __name__ == '__main__':
     run_hybrid_system()
