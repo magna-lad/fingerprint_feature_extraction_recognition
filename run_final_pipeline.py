@@ -116,8 +116,8 @@ def train_one_cnn_model(model_idx, train_loader, val_loader):
         
         print(f"  M{model_idx+1} Ep {epoch+1}: Val Loss {avg_v_loss:.4f} | Val AUC {v_auc:.4f}")
         
-        scheduler.step(avg_v_loss)  # ← ADDED: Step scheduler based on val loss
-        stopper(avg_v_loss, model)
+        scheduler.step(1 - v_auc)    # was: scheduler.step(avg_v_loss)
+        stopper(1 - v_auc, model)    # was: stopper(avg_v_loss, model)
         
         if stopper.early_stop:
             print("  > Early Stopping.")
