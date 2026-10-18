@@ -364,3 +364,11 @@ def run_hybrid_system():
 
 if __name__ == '__main__':
     run_hybrid_system()
+
+
+from IPython.display import Image, display
+for f in ["kaggle_final_results.png", "det_curve.png", "alpha_sensitivity.png"]:
+    p = os.path.join(OUTPUT_DIR, f)
+    if os.path.exists(p):
+        print(p)
+        display(Image(filename=p, width=700))
