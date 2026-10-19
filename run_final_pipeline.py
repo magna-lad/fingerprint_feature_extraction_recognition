@@ -64,45 +64,46 @@ def prepare_xgb_features(pairs, desc):
     return np.array(X), np.array(y)
 
 def train_one_cnn_model(model_idx, train_loader, val_loader):
-    """Helper function to train a single CNN instance."""
     print(f"\n--- Training CNN Ensemble Member {model_idx+1}/{NUM_CNN_MODELS} ---")
-    
+
     model = DeeperCNN().to(DEVICE)
     criterion = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=1e-4)  # ← FIXED: 1e-3 → 1e-4
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(  # ← FIXED: Changed scheduler
-        optimizer, mode='min', factor=0.5, patience=3
-    )
-    
+    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
+
     save_path = os.path.join(OUTPUT_DIR, f'cnn_v{model_idx}.pth')
+    ckpt_path = os.path.join(OUTPUT_DIR, f'cnn_v{model_idx}_last.pt')   # <-- was missing
     stopper = EarlyStopping(patience=8, path=save_path)
-    
-    for epoch in range(EPOCHS):
+
+    start_epoch = 0
+    if os.path.exists(ckpt_path):
+        ck = torch.load(ckpt_path, map_location=DEVICE)
+        model.load_state_dict(ck["model"])
+        optimizer.load_state_dict(ck["optimizer"])
+        scheduler.load_state_dict(ck["scheduler"])
+        stopper.counter, stopper.best_loss, stopper.early_stop = ck["stopper"]
+        start_epoch = ck["epoch"] + 1
+        if ck["finished"]:
+            print(f"  M{model_idx+1} already finished, skipping.")
+            return save_path
+        print(f"  Resuming M{model_idx+1} at epoch {start_epoch + 1}")
+
+    for epoch in range(start_epoch, EPOCHS):
         model.train()
-        t_loss = 0
-        
-        # TQDM bar
         train_bar = tqdm(train_loader, desc=f"M{model_idx+1} Ep {epoch+1}/{EPOCHS}", leave=False)
-        
         for img1, img2, label in train_bar:
             img1, img2, label = img1.to(DEVICE), img2.to(DEVICE), label.to(DEVICE)
-            
             optimizer.zero_grad()
             logits = model(img1, img2)
             loss = criterion(logits, label)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
-            # REMOVED: scheduler.step() - not needed for ReduceLROnPlateau
-            
-            t_loss += loss.item()
             train_bar.set_postfix({'loss': f"{loss.item():.4f}"})
-        
-        # Validation
+
         model.eval()
         v_loss = 0
         preds, labels_list = [], []
-        
         with torch.no_grad():
             for img1, img2, label in val_loader:
                 img1, img2, label = img1.to(DEVICE), img2.to(DEVICE), label.to(DEVICE)
@@ -110,26 +111,36 @@ def train_one_cnn_model(model_idx, train_loader, val_loader):
                 v_loss += criterion(logits, label).item()
                 preds.extend(torch.sigmoid(logits).cpu().numpy())
                 labels_list.extend(label.cpu().numpy())
-        
+
         avg_v_loss = v_loss / len(val_loader)
-        v_auc = auc(roc_curve(labels_list, preds)[0], roc_curve(labels_list, preds)[1])
-        
+        fpr_v, tpr_v, _ = roc_curve(labels_list, preds)
+        v_auc = auc(fpr_v, tpr_v)
         print(f"  M{model_idx+1} Ep {epoch+1}: Val Loss {avg_v_loss:.4f} | Val AUC {v_auc:.4f}")
-        
-        scheduler.step(1 - v_auc)    # was: scheduler.step(avg_v_loss)
-        stopper(1 - v_auc, model)    # was: stopper(avg_v_loss, model)
-        
+
+        scheduler.step(1 - v_auc)
+        stopper(1 - v_auc, getattr(model, "module", model))
+
+        finished = stopper.early_stop or epoch == EPOCHS - 1
+        tmp = ckpt_path + ".tmp"
+        torch.save({
+            "epoch": epoch,
+            "model": getattr(model, "module", model).state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict(),
+            "stopper": (stopper.counter, stopper.best_loss, stopper.early_stop),
+            "finished": finished,
+        }, tmp)
+        os.replace(tmp, ckpt_path)
+
         if stopper.early_stop:
             print("  > Early Stopping.")
             break
-    
-    # Clean up GPU memory
-    del model
-    del optimizer
+
+    del model, optimizer
     torch.cuda.empty_cache()
     gc.collect()
-    
     return save_path
+
 
 def run_hybrid_system():
     print("="*60); print(" KAGGLE ENSEMBLE PIPELINE (3x CNN + XGB) "); print("="*60)

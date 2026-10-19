@@ -29,6 +29,11 @@ class FingerprintTextureDataset(Dataset):
         else:
             self.transform = None
 
+        self._cache = {}
+        for path in {g.img_path for pair in pairs for g in pair[:2]}:
+            p = self.preprocess_image(path)
+            self._cache[path] = ((p - p.min()) / (p.max() - p.min() + 1e-6) * 255).astype(np.uint8)
+
     def __len__(self):
         return len(self.pairs)
         
@@ -69,15 +74,10 @@ class FingerprintTextureDataset(Dataset):
             patch = (patch - patch.mean()) / (patch.std() + 1e-6)
         return patch
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx):   
         g1, g2, label = self.pairs[idx]
-        p1 = self.preprocess_image(g1.img_path)
-        p2 = self.preprocess_image(g2.img_path)
-        
-        p1_min, p1_max = p1.min(), p1.max()
-        p2_min, p2_max = p2.min(), p2.max()
-        p1_u8 = ((p1 - p1_min) / (p1_max - p1_min + 1e-6) * 255).astype(np.uint8)
-        p2_u8 = ((p2 - p2_min) / (p2_max - p2_min + 1e-6) * 255).astype(np.uint8)
+        p1_u8 = self._cache[g1.img_path]
+        p2_u8 = self._cache[g2.img_path]
 
         if self.augment:
             img1 = self.transform(p1_u8)  # ToTensor included
