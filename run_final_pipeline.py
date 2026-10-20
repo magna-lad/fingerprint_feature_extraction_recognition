@@ -77,7 +77,7 @@ def train_one_cnn_model(model_idx, train_loader, val_loader):
 
     start_epoch = 0
     if os.path.exists(ckpt_path):
-        ck = torch.load(ckpt_path, map_location=DEVICE)
+        ck = torch.load(ckpt_path, map_location=DEVICE, weights_only=False)
         model.load_state_dict(ck["model"])
         optimizer.load_state_dict(ck["optimizer"])
         scheduler.load_state_dict(ck["scheduler"])
