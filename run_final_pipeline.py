@@ -26,7 +26,7 @@ from additional_metrics import (
 from revision_analyses import (
     protocol_report, dead_features, xgb_feature_ablation,
     per_model_probs, ensemble_size_ablation, alpha_sweep,
-    val_selected_operating_points, subject_bootstrap, pair_uids,build_pairs_per_split
+    val_selected_operating_points, subject_bootstrap, pair_uids,build_pairs_per_split,fusion_normalization_ablation
 )
 import psutil
 
@@ -141,20 +141,19 @@ def train_one_cnn_model(model_idx, train_loader, val_loader):
     gc.collect()
     return save_path
 
-
 def run_hybrid_system():
     print("="*60); print(" KAGGLE ENSEMBLE PIPELINE (3x CNN + XGB) "); print("="*60)
-    
+
     # [1] LOAD DATA
     print("\n[1] Preparing Data...")
-    users = load_users_dictionary(DATA_FILE, True) 
+    users = load_users_dictionary(DATA_FILE, True)
     if users is None: return
 
     analyzer = GraphMinutiae(users)
     analyzer.graph_maker()
     train_u, val_u, test_u = analyzer.get_user_splits(train_ratio=0.70, val_ratio=0.15)
     train_pairs, val_pairs, test_pairs = build_pairs_per_split(analyzer, train_u, val_u, test_u)
-    protocol_report(train_pairs, val_pairs, test_pairs)      # always runs now
+    protocol_report(train_pairs, val_pairs, test_pairs)
     if len(val_pairs) == 0:
         print("CRITICAL ERROR: Val set empty."); return
 
@@ -174,7 +173,7 @@ def run_hybrid_system():
     print(f"Missing/invalid image paths: {missing} / 4000 checked")
     assert missing == 0, "image paths in the pickle do not exist in this notebook"
 
-    # [2] TRAIN XGBOOST
+    # [2] XGBOOST
     print("\n[2] Training XGBoost (Geometry Branch)...")
     xgb_file = os.path.join(OUTPUT_DIR, "xgb_scores.npz")
     if os.path.exists(xgb_file):
@@ -203,13 +202,15 @@ def run_hybrid_system():
         dead_features(X_train)
         if RUN_XGB_ABLATION:
             xgb_feature_ablation(X_train, y_train, X_val, y_val, X_test, y_test)
-            np.savez(xgb_file, y_train=y_train, y_val=y_val, y_test=y_test,
+        np.savez(xgb_file, y_train=y_train, y_val=y_val, y_test=y_test,
                  xgb_val=xgb_val_probs, xgb_test=xgb_test_probs)
+
     fpr_xgb_val, tpr_xgb_val, _ = roc_curve(y_val, xgb_val_probs)
     auc_xgb_val = auc(fpr_xgb_val, tpr_xgb_val)
     fpr_xgb_test, tpr_xgb_test, _ = roc_curve(y_test, xgb_test_probs)
     auc_xgb_test = auc(fpr_xgb_test, tpr_xgb_test)
     eer_xgb_test = calculate_eer(y_test, xgb_test_probs)
+
     print("\n" + "="*60)
     print(" XGBOOST STANDALONE RESULTS")
     print("="*60)
@@ -218,104 +219,64 @@ def run_hybrid_system():
     print(f"   Test EER:       {eer_xgb_test:.4f}")
     print("="*60)
 
-
-    # [3] TRAIN CNN ENSEMBLE
+    # [3] CNN ENSEMBLE
     print(f"\n[3] Training CNN Ensemble ({NUM_CNN_MODELS} Models)...")
-    
-    # Setup Data Loaders
     train_ds = FingerprintTextureDataset(train_pairs, GraphMinutiae.find_true_core, augment=True)
     val_ds = FingerprintTextureDataset(val_pairs, GraphMinutiae.find_true_core, augment=False)
     test_ds = FingerprintTextureDataset(test_pairs, GraphMinutiae.find_true_core, augment=False)
-    
+
     class_counts = np.bincount(y_train)
     weights = 1. / class_counts
     sample_weights = [weights[int(t)] for t in y_train]
     sampler = WeightedRandomSampler(sample_weights, len(sample_weights))
-    
-    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, sampler=sampler, num_workers=2)
-    val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False)
-    test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False)
-    
-    model_paths = []
-    # Train Loop for Ensemble
-    for i in range(NUM_CNN_MODELS):
-        path = train_one_cnn_model(i, train_loader, val_loader)
-        model_paths.append(path)
-        
-    # [4] ENSEMBLE INFERENCE
-    print("\n[4] Running Ensemble Inference...")
-    
-    def get_ensemble_probs(loader, desc):
-        # Accumulate probabilities from all models
-        accumulated_probs = np.zeros(len(loader.dataset))
-        
-        for idx, path in enumerate(model_paths):
-            print(f"   > Inference using Model {idx+1}...")
-            model = DeeperCNN().to(DEVICE)
-            model.load_state_dict(torch.load(path))
-            model.eval()
-            
-            model_probs = []
-            with torch.no_grad():
-                for img1, img2, _ in tqdm(loader, desc=f"M{idx+1} {desc}", leave=False):
-                    logits = model(img1.to(DEVICE), img2.to(DEVICE))
-                    model_probs.extend(torch.sigmoid(logits).cpu().numpy())
-            
-            accumulated_probs += np.array(model_probs)
-            
-            # Memory Cleanup
-            del model; torch.cuda.empty_cache(); gc.collect()
-            
-        return accumulated_probs / NUM_CNN_MODELS  # Average them
 
-    ensemble_val_probs = get_ensemble_probs(val_loader, "Val")
-    ensemble_test_probs = get_ensemble_probs(test_loader, "Test")
-    
-    # [5] OPTIMIZE FUSION
+    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, sampler=sampler, num_workers=2)
+    val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
+    test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
+
+    model_paths = [train_one_cnn_model(i, train_loader, val_loader) for i in range(NUM_CNN_MODELS)]
+
+    # [4] ENSEMBLE INFERENCE (one pass per model)
+    print("\n[4] Running Ensemble Inference...")
+    mp_val = per_model_probs(val_loader, model_paths, DeeperCNN, DEVICE)
+    mp_test = per_model_probs(test_loader, model_paths, DeeperCNN, DEVICE)
+    ensemble_val_probs = mp_val.mean(0)
+    ensemble_test_probs = mp_test.mean(0)
+
+    # [5] FUSION
     print("\n[5] Optimizing Fusion Weights...")
-    best_val_auc = 0
-    best_alpha = 0.5
+    best_val_auc, best_alpha = 0, 0.5
     for alpha in np.linspace(0, 1, 101):
         mix = (alpha * ensemble_val_probs) + ((1 - alpha) * xgb_val_probs)
         fpr, tpr, _ = roc_curve(y_val, mix)
         sc = auc(fpr, tpr)
         if sc > best_val_auc:
-            best_val_auc = sc
-            best_alpha = alpha
-
-    mp_val  = per_model_probs(val_loader,  model_paths, DeeperCNN, DEVICE)
-    mp_test = per_model_probs(test_loader, model_paths, DeeperCNN, DEVICE)
-    ensemble_size_ablation(y_test, mp_test, "test")
-
-    alpha_sweep(y_val, ensemble_val_probs, xgb_val_probs,
-            y_test, ensemble_test_probs, xgb_test_probs)
-    
+            best_val_auc, best_alpha = sc, alpha
     print(f"  > Best Alpha: {best_alpha:.2f} (CNN Ensemble Weight)")
     print(f"  > Best Val AUC: {best_val_auc:.4f}")
-    
-    # [6] FINAL EVALUATION & MULTI-PLOT
+
+    ensemble_size_ablation(y_test, mp_test, "test")
+    alpha_sweep(y_val, ensemble_val_probs, xgb_val_probs,
+                y_test, ensemble_test_probs, xgb_test_probs)
+    fusion_normalization_ablation(y_val, ensemble_val_probs, xgb_val_probs,
+                                  y_test, ensemble_test_probs, xgb_test_probs)
+
+    # [6] FINAL EVALUATION
     print("\n[6] PLOTTING & SAVING RESULTS")
-    
-    # Calculate curves for all 3
-    # 1. XGB Only
     fpr_x, tpr_x, _ = roc_curve(y_test, xgb_test_probs)
     auc_x = auc(fpr_x, tpr_x)
-    eer_c = calculate_eer(y_test, ensemble_test_probs)
-
-    # 2. CNN Ensemble Only
     fpr_c, tpr_c, _ = roc_curve(y_test, ensemble_test_probs)
     auc_c = auc(fpr_c, tpr_c)
-    
-    # 3. Hybrid
-    final_probs = (best_alpha * ensemble_test_probs) + ((1 - best_alpha) * xgb_test_probs)
-    final_val_probs = best_alpha * ensemble_val_probs + (1 - best_alpha) * xgb_val_probs
-    val_selected_operating_points(y_val, final_val_probs, y_test, final_probs)
+    eer_c = calculate_eer(y_test, ensemble_test_probs)
 
+    final_probs = (best_alpha * ensemble_test_probs) + ((1 - best_alpha) * xgb_test_probs)
+    final_val_probs = (best_alpha * ensemble_val_probs) + ((1 - best_alpha) * xgb_val_probs)
     fpr_h, tpr_h, _ = roc_curve(y_test, final_probs)
     auc_h = auc(fpr_h, tpr_h)
-    # Calculate and print EER
     final_eer = calculate_eer(y_test, final_probs)
-    
+
+    val_selected_operating_points(y_val, final_val_probs, y_test, final_probs)
+
     print("-" * 40)
     print(f"XGBoost Only AUC:     {auc_x:.4f}")
     print(f"CNN Ensemble AUC:     {auc_c:.4f}")
@@ -324,65 +285,52 @@ def run_hybrid_system():
     print(f"FINAL HYBRID EER:     {final_eer:.4f}")
     print("-" * 40)
 
-
-
-    for name, probs in [("XGBoost", xgb_test_probs),("CNN Ensemble", ensemble_test_probs),("Hybrid", final_probs)]:
+    for name, probs in [("XGBoost", xgb_test_probs), ("CNN Ensemble", ensemble_test_probs), ("Hybrid", final_probs)]:
         print(name, tar_at_far(y_test, probs))
-       
-        # --- d-prime ---
     print("Hybrid d-prime:", dprime(y_test, final_probs))
 
     u1, u2 = pair_uids(test_pairs)
     subject_bootstrap(y_test, {"hybrid": final_probs, "cnn": ensemble_test_probs}, u1, u2, metric="auc")
     subject_bootstrap(y_test, {"hybrid": final_probs, "cnn": ensemble_test_probs}, u1, u2, metric="eer")
 
-    # --- DET curve for all three systems ---
     plot_det_curve({
         "XGBoost": (y_test, xgb_test_probs),
         "CNN Ensemble": (y_test, ensemble_test_probs),
         "Hybrid": (y_test, final_probs),
-    }, save_path="det_curve.png")
-    
+    }, save_path=os.path.join(OUTPUT_DIR, "det_curve.png"))
+
     try:
         plt.close('all')
-        plt.figure(figsize=(10,8))
-        
-        # Plot 1: XGB
-        plt.plot(fpr_x, tpr_x, label=f'XGBoost (AUC={auc_x:.4f})', 
+        plt.figure(figsize=(10, 8))
+        plt.plot(fpr_x, tpr_x, label=f'XGBoost (AUC={auc_x:.4f})',
                  color='red', linestyle='--', alpha=0.8, linewidth=2)
-        
-        # Plot 2: CNN Ensemble
-        plt.plot(fpr_c, tpr_c, label=f'CNN Ensemble (AUC={auc_c:.4f})', 
+        plt.plot(fpr_c, tpr_c, label=f'CNN Ensemble (AUC={auc_c:.4f})',
                  color='blue', linestyle='-.', alpha=0.8, linewidth=2)
-        
-        # Plot 3: Hybrid (Bold)
-        plt.plot(fpr_h, tpr_h, label=f'Hybrid Fusion (AUC={auc_h:.4f})', 
+        plt.plot(fpr_h, tpr_h, label=f'Hybrid Fusion (AUC={auc_h:.4f})',
                  color='purple', linestyle='-', linewidth=3)
-        
-        plt.plot([0,1],[0,1],'k--', alpha=0.5)
+        plt.plot([0, 1], [0, 1], 'k--', alpha=0.5)
         plt.title(f"Performance Comparison (Hybrid $\\alpha={best_alpha:.2f}$)")
         plt.xlabel('False Positive Rate')
         plt.ylabel('True Positive Rate')
         plt.legend(loc="lower right")
         plt.grid(True, alpha=0.3)
-        
         save_path = os.path.join(OUTPUT_DIR, 'kaggle_final_results.png')
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"\n[SUCCESS] Graph saved to: {save_path}")
-
-    
     except Exception as e:
         print(f"\n[ERROR] Plotting failed: {e}")
 
-    np.savez("scores.npz", y_val=y_val, y_test=y_test, xgb_val=xgb_val_probs, xgb_test=xgb_test_probs, cnn_val=ensemble_val_probs, cnn_test=ensemble_test_probs)
+    np.savez(os.path.join(OUTPUT_DIR, "scores.npz"), y_val=y_val, y_test=y_test,
+             xgb_val=xgb_val_probs, xgb_test=xgb_test_probs,
+             cnn_val=ensemble_val_probs, cnn_test=ensemble_test_probs,
+             mp_val=mp_val, mp_test=mp_test)
+
 
 if __name__ == '__main__':
     run_hybrid_system()
-
-
-from IPython.display import Image, display
-for f in ["kaggle_final_results.png", "det_curve.png", "alpha_sensitivity.png"]:
-    p = os.path.join(OUTPUT_DIR, f)
-    if os.path.exists(p):
-        print(p)
-        display(Image(filename=p, width=700))
+    from IPython.display import Image, display
+    for f in ["kaggle_final_results.png", "det_curve.png", "alpha_sensitivity.png"]:
+        p = os.path.join(OUTPUT_DIR, f)
+        if os.path.exists(p):
+            print(p)
+            display(Image(filename=p, width=700))
