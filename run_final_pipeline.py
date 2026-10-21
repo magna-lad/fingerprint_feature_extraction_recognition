@@ -28,7 +28,7 @@ from revision_analyses import (
     per_model_probs, ensemble_size_ablation, alpha_sweep,
     val_selected_operating_points, subject_bootstrap, pair_uids,build_pairs_per_split
 )
-
+import psutil
 
 SEED = 42
 os.environ['PYTHONHASHSEED'] = str(SEED)
@@ -46,8 +46,8 @@ BATCH_SIZE = 128
 EPOCHS = 35             # Slightly reduced epochs since we train 3 models
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 DATA_FILE = r"/kaggle/input/datasets/sangamkou/biometric-cache/processed_data.pkl"
-
-OUTPUT_DIR = "."        # In Kaggle, this maps to /kaggle/working/
+RUN_XGB_ABLATION = True
+OUTPUT_DIR = "/kaggle/working/fingerprint_feature_extraction_recognition"       # In Kaggle, this maps to /kaggle/working/
 
 def calculate_eer(y_true, y_probs):
     fpr, tpr, thresholds = roc_curve(y_true, y_probs, pos_label=1)
@@ -152,58 +152,64 @@ def run_hybrid_system():
 
     analyzer = GraphMinutiae(users)
     analyzer.graph_maker()
-    #all_pairs = analyzer.create_graph_pairs(num_impostors_per_genuine=3)
     train_u, val_u, test_u = analyzer.get_user_splits(train_ratio=0.70, val_ratio=0.15)
-    
-    # Split
-    train_u, val_u, test_u = analyzer.get_user_splits(train_ratio=0.70, val_ratio=0.15) 
-
     train_pairs, val_pairs, test_pairs = build_pairs_per_split(analyzer, train_u, val_u, test_u)
-    
+    protocol_report(train_pairs, val_pairs, test_pairs)      # always runs now
     if len(val_pairs) == 0:
-        print("CRITICAL ERROR: Val set empty.")
-        protocol_report(train_pairs, val_pairs, test_pairs)
-        return
+        print("CRITICAL ERROR: Val set empty."); return
+
+    print(f"RAM before cleanup: {psutil.Process(os.getpid()).memory_info().rss/1e9:.1f} GB")
+    for info in analyzer.fingerprint_graphs:
+        g = info["graph"]
+        g.skeleton = None; g.orientation_map = None; g.raw_minutiae = None
+    analyzer.users_minutiae = None
+    del users
+    gc.collect()
+    print(f"RAM after cleanup:  {psutil.Process(os.getpid()).memory_info().rss/1e9:.1f} GB")
 
     missing = 0
     for g1, g2, label in train_pairs[:2000]:
-        if g1.img_path is None or not os.path.exists(g1.img_path):
-            missing += 1
-        if g2.img_path is None or not os.path.exists(g2.img_path):
-            missing += 1
+        if g1.img_path is None or not os.path.exists(g1.img_path): missing += 1
+        if g2.img_path is None or not os.path.exists(g2.img_path): missing += 1
     print(f"Missing/invalid image paths: {missing} / 4000 checked")
-    
+    assert missing == 0, "image paths in the pickle do not exist in this notebook"
+
     # [2] TRAIN XGBOOST
     print("\n[2] Training XGBoost (Geometry Branch)...")
-    X_train, y_train = prepare_xgb_features(train_pairs, "Extract Train")
-    X_val, y_val = prepare_xgb_features(val_pairs, "Extract Val")
-    X_test, y_test = prepare_xgb_features(test_pairs, "Extract Test")
-    
-    scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_val = scaler.transform(X_val)
-    X_test = scaler.transform(X_test)
-    
-    xgb_model = xgb.XGBClassifier(n_estimators=2000, max_depth=6, learning_rate=0.02, 
-                                  eval_metric='logloss', early_stopping_rounds=60, n_jobs=-1,random_state=SEED)
-    xgb_model.fit(X_train, y_train, eval_set=[(X_val, y_val)])
-    
-    # Store XGBoost Predictions
-    xgb_val_probs = xgb_model.predict_proba(X_val)[:, 1]
-    xgb_test_probs = xgb_model.predict_proba(X_test)[:, 1]
-    dead_features(X_train)
-    xgb_feature_ablation(X_train, y_train, X_val, y_val, X_test, y_test)  # refits XGBoost 11 times
-    print(f"   > XGBoost Best Iteration: {xgb_model.best_iteration}")
+    xgb_file = os.path.join(OUTPUT_DIR, "xgb_scores.npz")
+    if os.path.exists(xgb_file):
+        z = np.load(xgb_file)
+        y_train, y_val, y_test = z["y_train"], z["y_val"], z["y_test"]
+        xgb_val_probs, xgb_test_probs = z["xgb_val"], z["xgb_test"]
+        assert np.array_equal(y_test, [p[2] for p in test_pairs]), "cached XGB scores do not match these pairs"
+        print("Loaded cached XGBoost scores.")
+    else:
+        X_train, y_train = prepare_xgb_features(train_pairs, "Extract Train")
+        X_val, y_val = prepare_xgb_features(val_pairs, "Extract Val")
+        X_test, y_test = prepare_xgb_features(test_pairs, "Extract Test")
 
-    # Calculate XGBoost standalone metrics
+        scaler = StandardScaler()
+        X_train = scaler.fit_transform(X_train)
+        X_val = scaler.transform(X_val)
+        X_test = scaler.transform(X_test)
+
+        xgb_model = xgb.XGBClassifier(n_estimators=2000, max_depth=6, learning_rate=0.02,
+                                      eval_metric='logloss', early_stopping_rounds=60,
+                                      n_jobs=-1, random_state=SEED)
+        xgb_model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+        xgb_val_probs = xgb_model.predict_proba(X_val)[:, 1]
+        xgb_test_probs = xgb_model.predict_proba(X_test)[:, 1]
+        print(f"   > XGBoost Best Iteration: {xgb_model.best_iteration}")
+        dead_features(X_train)
+        if RUN_XGB_ABLATION:
+            xgb_feature_ablation(X_train, y_train, X_val, y_val, X_test, y_test)
+            np.savez(xgb_file, y_train=y_train, y_val=y_val, y_test=y_test,
+                 xgb_val=xgb_val_probs, xgb_test=xgb_test_probs)
     fpr_xgb_val, tpr_xgb_val, _ = roc_curve(y_val, xgb_val_probs)
     auc_xgb_val = auc(fpr_xgb_val, tpr_xgb_val)
-    
     fpr_xgb_test, tpr_xgb_test, _ = roc_curve(y_test, xgb_test_probs)
     auc_xgb_test = auc(fpr_xgb_test, tpr_xgb_test)
-    
     eer_xgb_test = calculate_eer(y_test, xgb_test_probs)
-    
     print("\n" + "="*60)
     print(" XGBOOST STANDALONE RESULTS")
     print("="*60)
@@ -211,11 +217,8 @@ def run_hybrid_system():
     print(f"   Test AUC:       {auc_xgb_test:.4f}")
     print(f"   Test EER:       {eer_xgb_test:.4f}")
     print("="*60)
-    
-    # [3] TRAIN CNN ENSEMBLE
-    print(f"\n[3] Training CNN Ensemble ({NUM_CNN_MODELS} Models)...")
-    
-    
+
+
     # [3] TRAIN CNN ENSEMBLE
     print(f"\n[3] Training CNN Ensemble ({NUM_CNN_MODELS} Models)...")
     
